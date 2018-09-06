@@ -190,7 +190,7 @@ export default class Html2Canvas {
     return this.rootElement;
   }
   async render() {
-    const cx2d = this.canvas.getContext("2d");
+    const cx2d = this.canvas.getContext("2d", {alpha: !!this.options.alpha});
     await this.rootElement.render(cx2d);
   }
 }

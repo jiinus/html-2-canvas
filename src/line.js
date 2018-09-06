@@ -13,7 +13,7 @@ function getBuffer(renderer) {
       height: 50,
       width: 50,
     });
-    buff = cvs.getContext("2d");
+    buff = cvs.getContext("2d", { alpha: !!renderer.options.alpha });
   }
   return buff;
 }
@@ -63,7 +63,7 @@ function getCharacterData(char, style, element, renderer) {
       a.push(`${fontHeight}px/${lineHeight}px`);
     } else if (font.size) {
       fontHeight = font.size.valueOf(element);
-      lineHeight = fontHeight;
+      lineHeight = fontHeight * 1.2;
       a.push(`${fontHeight}px/${fontHeight}px`);
     }
     if (font.family) {
@@ -97,6 +97,7 @@ function getCharacterData(char, style, element, renderer) {
   ctx.restore();
   return info;
 }
+
 function mergeFormat(target, source, renderer) {
   return Object.keys(source).reduce((s, key) => {
     for (let x in renderer.inheritableCSS) {
@@ -150,7 +151,6 @@ function processElements(elements, renderer, parentContainer, parentElement = {}
   }, Promise.resolve([]));
 }
 
-
 export default class LineRenderer {
   constructor({elements, parent, renderer}) {
     this.elements = elements;
@@ -166,6 +166,8 @@ export default class LineRenderer {
     };
     this.lines = [];
     const flat = await processElements(this.elements, this.renderer, this.parent);
+    const consonants = ['b', 'c', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm', 'n', 'p', 'q', 'r', 's', 't', 'v', 'w', 'x', 'z']
+    const vowels = ['a', 'e', 'i', 'o', 'u', 'y', 'ä', 'ö', 'å']
     let line = {
       width: 0,
       height: 0,
@@ -210,15 +212,66 @@ export default class LineRenderer {
       } else if (element.type === "text") {
         const text = (element.data || "");
         if (text.length > 0) {
+          var lastLineBreakOpportunityIndex = -1;
+          var lastLineBreakOpportunitySymbol = null;
           for (let i = 0; i < text.length; i++) {
-            const data = getCharacterData(text[i], element.format, element, this.renderer);
-            if ((data.width + line.width) > this.bounding.width) {
+            let char = text[i];
+            let nextChar = (i < text.length - 1) ? text[i + 1] : null;
+            let charsLeft = text.length - i
+            if (char === ' ') {
+              lastLineBreakOpportunityIndex = i + 1
+              lastLineBreakOpportunitySymbol = null
+            } else if (char === '-') {
+              lastLineBreakOpportunityIndex = i + 1
+              lastLineBreakOpportunitySymbol = null
+            } else if (char === '.') {
+              lastLineBreakOpportunityIndex = i + 1
+              lastLineBreakOpportunitySymbol = null
+            } else if (charsLeft >= 4 && !!~consonants.indexOf(char) && nextChar && !!~vowels.indexOf(nextChar) && (i - lastLineBreakOpportunityIndex >= 5 || lastLineBreakOpportunitySymbol === '-')) {
+              lastLineBreakOpportunityIndex = i
+              lastLineBreakOpportunitySymbol = '-'
+            }
+            const data = getCharacterData(char, element.format, element, this.renderer);
+
+            // Allow space to exceed bounds
+            if ((data.width + line.width) > this.bounding.width && char !== ' ') {
+
+              let nextLineWidth = 0
+              let excessChars = []
+
+              if (lastLineBreakOpportunityIndex > -1) {
+                let numExcessChars = i - lastLineBreakOpportunityIndex;
+                let lineBreakOffset = line.chars.length - numExcessChars;
+                excessChars = line.chars.splice(lineBreakOffset, numExcessChars);
+                excessChars.forEach((excessChar) => {
+                  nextLineWidth += excessChar.width;
+                })
+                // If the next line doesn't fit on one line, cancel this hyphenation operation
+                if (nextLineWidth <= this.bounding.width) {
+
+                  // Remove the width of the excess characters from this line
+                  line.width -= nextLineWidth
+
+                  // If we want to add a dash, do so
+                  if (lastLineBreakOpportunitySymbol) {
+                    let hyphenationSymbolData = getCharacterData(lastLineBreakOpportunitySymbol, element.format, element, this.renderer);
+                    line.chars.push(hyphenationSymbolData)
+                    line.width += hyphenationSymbolData.width;
+                  }
+                } else {
+                  line.chars = line.chars.concat(excessChars)
+                  nextLineWidth = 0
+                  excessChars = []
+                }
+              }
+
+              // Need to break line
               this.bounding.height = this.bounding.height.add(line.height);
               this.lines.push(line);
               line = {
-                width: 0,
+                width: nextLineWidth,
                 height: 0,
-                chars: [],
+                chars: excessChars,
               };
             }
             if (data.height > line.height) {
